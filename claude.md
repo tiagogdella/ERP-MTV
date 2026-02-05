@@ -37,11 +37,12 @@ Funcionalidades mínimas esperadas:
    - Contas a receber
 4. Listagem de operações abertas e liquidadas
 5. Histórico completo das operações
-6. Exportação de dados para Excel (.xlsx)
+6. Exportação de dados para Excel (.xlsx)(só quando solicitado)
 
 ---
 
 ## Fora do Escopo (por enquanto)
+- automação na emissão da nf
 - Interface gráfica
 - Web
 - Multiusuário simultâneo
