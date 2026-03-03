@@ -49,6 +49,39 @@ def init_db():
         )
     ''')
 
+    # Tabela de pedidos
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            empresa_id INTEGER NOT NULL,
+            data_pedido DATE NOT NULL,
+            prazo_dias INTEGER DEFAULT 7,
+            data_prevista_entrega DATE,
+            status TEXT DEFAULT 'ABERTO' CHECK(status IN ('ABERTO', 'BAIXADO', 'CANCELADO')),
+            placa TEXT,
+            data_baixa DATE,
+            observacao TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+        )
+    ''')
+
+    # Tabela de itens do pedido
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS itens_pedido (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            tipo_embalagem TEXT NOT NULL,
+            quantidade REAL NOT NULL,
+            peso_por_unidade REAL NOT NULL DEFAULT 1.0,
+            peso_kg REAL NOT NULL,
+            preco_unitario REAL NOT NULL,
+            icms INTEGER DEFAULT 0,
+            valor_total REAL NOT NULL,
+            FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 

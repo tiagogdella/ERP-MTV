@@ -18,6 +18,12 @@ from services.financeiro import (
     listar_contas_a_pagar, listar_contas_a_receber,
     listar_vencidas, resumo_financeiro
 )
+from services.pedidos import (
+    cadastrar_pedido, adicionar_item_pedido,
+    listar_pedidos, buscar_pedido,
+    atualizar_data_entrega, baixar_pedido,
+    PESO_POR_EMBALAGEM, LABEL_EMBALAGEM
+)
 
 
 def menu_principal():
@@ -28,6 +34,7 @@ def menu_principal():
         print("  2. Operações (Compra/Venda)")
         print("  3. Financeiro")
         print("  4. Relatórios")
+        print("  5. Pedidos ")
         print()
         print("  0. Sair")
         print()
@@ -42,6 +49,8 @@ def menu_principal():
             menu_financeiro()
         elif opcao == "4":
             menu_relatorios()
+        elif opcao == "5":
+            menu_pedidos()
         elif opcao == "0":
             if confirmar("Deseja realmente sair? (S/N): "):
                 limpar_tela()
@@ -494,5 +503,393 @@ def tela_historico():
         print("-" * 70)
         for op in operacoes:
             print(f"{op.id:<5} {formatar_data(op.data_operacao):<12} {op.tipo:<7} {op.empresa_nome[:18]:<18} {formatar_moeda(op.valor):>14} {op.status:<10}")
+
+    pausar()
+
+
+# ==================== PEDIDOS ====================
+
+def menu_pedidos():
+    """Menu de pedidos."""
+    while True:
+        cabecalho("PEDIDOS")
+        print("  1. Cadastrar Pedido")
+        print("  2. Consultar Pedidos")
+        print("  3. Baixa de Pedido (carregado)")
+        print()
+        print("  0. Voltar")
+        print()
+
+        opcao = input("Opção: ").strip()
+
+        if opcao == "1":
+            tela_cadastrar_pedido()
+        elif opcao == "2":
+            tela_consultar_pedidos()
+        elif opcao == "3":
+            tela_baixar_pedido()
+        elif opcao == "0":
+            break
+        else:
+            print("Opção inválida!")
+            pausar()
+
+
+def _selecionar_embalagem() -> tuple:
+    """
+    Solicita tipo de embalagem e retorna (tipo, quantidade_kg, peso_por_unidade).
+    AGRANEL e BAG: faturados em kg — quantidade é diretamente o peso em kg.
+    FARDO_30x1 e FARDO_10x1: quantidade é número de fardos, peso calculado.
+    """
+    tipos = list(PESO_POR_EMBALAGEM.keys())
+    print()
+    print("  Tipo de embalagem:")
+    for i, t in enumerate(tipos, 1):
+        print(f"    {i}. {LABEL_EMBALAGEM[t]}")
+    print()
+
+    idx = input_inteiro("  Tipo (número): ", minimo=1, maximo=len(tipos))
+    tipo = tipos[idx - 1]
+
+    if tipo in ("AGRANEL", "BAG"):
+        # Faturado em kg — entrada direta em kg
+        qtd_kg = input_valor("  Quantidade (kg): ")
+        return tipo, qtd_kg, 1.0
+
+    elif tipo == "FARDO_30x1":
+        qtd = input_inteiro("  Número de fardos: ", minimo=1)
+        peso_uni = 30.0
+        print(f"  Peso por fardo: {peso_uni} kg  |  Total: {qtd * peso_uni:.2f} kg")
+        return tipo, float(qtd), peso_uni
+
+    else:  # FARDO_10x1
+        qtd = input_inteiro("  Número de fardos: ", minimo=1)
+        peso_uni = 10.0
+        print(f"  Peso por fardo: {peso_uni} kg  |  Total: {qtd * peso_uni:.2f} kg")
+        return tipo, float(qtd), peso_uni
+
+
+def tela_cadastrar_pedido():
+    """Tela de cadastro de pedido com múltiplos itens."""
+    cabecalho("CADASTRAR PEDIDO")
+
+    # Selecionar cliente
+    empresas = listar_empresas()
+    if not empresas:
+        print("Cadastre um cliente primeiro!")
+        pausar()
+        return
+
+    print("Clientes disponíveis:")
+    for emp in empresas:
+        print(f"  {emp.id}. {emp.nome}")
+    print()
+
+    empresa_id = input_inteiro("ID do cliente: ", minimo=1)
+    empresa = buscar_empresa(empresa_id)
+    if not empresa:
+        print("Cliente não encontrado!")
+        pausar()
+        return
+
+    prazo = input_inteiro("Prazo (dias): ", minimo=1)
+    data_entrega = input_data("Data prevista de entrega (DD/MM/AAAA): ", permitir_vazio=False)
+    observacao = input("Observação (opcional): ").strip() or None
+
+    # Criar o pedido
+    try:
+        pedido_id = cadastrar_pedido(empresa_id, prazo, data_entrega, observacao)
+    except Exception as e:
+        print(f"\nErro ao criar pedido: {e}")
+        pausar()
+        return
+
+    # Loop para adicionar itens
+    itens_adicionados = []
+    print()
+    print("--- ITENS DO PEDIDO ---")
+    print("Adicione os itens. Ao terminar, responda N ao adicionar outro.")
+
+    while True:
+        print(f"\n  Item #{len(itens_adicionados) + 1}")
+
+        tipo, qtd, peso_uni = _selecionar_embalagem()
+
+        preco = input_valor("  Preço unitário por kg (R$): ")
+
+        print("  Incidência de ICMS:")
+        print("    1. Com ICMS (12%)")
+        print("    2. Sem ICMS")
+        icms_op = input("  Opção [2]: ").strip() or "2"
+        icms = icms_op == "1"
+
+        peso_total = qtd * peso_uni
+        valor_base = peso_total * preco
+        valor_item = valor_base * 1.12 if icms else valor_base
+
+        lbl = LABEL_EMBALAGEM[tipo]
+        qtde_fmt = f"{qtd:.2f} kg" if tipo in ("AGRANEL", "BAG") else f"{qtd:.0f} unid."
+        print(f"\n  Resumo do item:")
+        print(f"    Embalagem:  {lbl}")
+        print(f"    Quantidade: {qtde_fmt}")
+        print(f"    Peso total: {peso_total:.2f} kg")
+        print(f"    Preço/kg:   {formatar_moeda(preco)}")
+        print(f"    ICMS:       {'Sim (12%)' if icms else 'Não'}")
+        print(f"    Valor item: {formatar_moeda(valor_item)}")
+
+        if confirmar("  Confirmar item? (S/N): "):
+            try:
+                adicionar_item_pedido(pedido_id, tipo, qtd, peso_uni, preco, icms)
+                itens_adicionados.append(valor_item)
+                print(f"  Item adicionado! Total parcial: {formatar_moeda(sum(itens_adicionados))}")
+            except Exception as e:
+                print(f"  Erro ao adicionar item: {e}")
+
+        continuar = input("\nAdicionar outro item? (S/N) [N]: ").strip().upper()
+        if continuar != "S":
+            break
+
+    if not itens_adicionados:
+        print("\nAVISO: Pedido criado sem itens.")
+
+    print(f"\nPedido #{pedido_id} cadastrado com sucesso!")
+    print(f"  Cliente:          {empresa.nome}")
+    print(f"  Prazo:            {prazo} dias")
+    print(f"  Entrega prevista: {formatar_data(data_entrega)}")
+    print(f"  Itens:            {len(itens_adicionados)}")
+    if itens_adicionados:
+        print(f"  Valor total:      {formatar_moeda(sum(itens_adicionados))}")
+
+    pausar()
+
+
+def _exibir_pedido_detalhado(pedido):
+    """Imprime os detalhes completos de um pedido."""
+    print(f"\n{'='*52}")
+    print(f"  Pedido #: {pedido.id}    Status: {pedido.status}")
+    print(f"  Cliente:  {pedido.empresa_nome}")
+    print(f"  Data:     {formatar_data(pedido.data_pedido)}")
+    print(f"  Prazo:    {pedido.prazo_dias} dias")
+    print(f"  Entrega:  {formatar_data(pedido.data_prevista_entrega)}")
+    if pedido.status == "BAIXADO":
+        print(f"  Placa:    {pedido.placa or '-'}")
+        print(f"  Baixa:    {formatar_data(pedido.data_baixa)}")
+    if pedido.observacao:
+        print(f"  Obs:      {pedido.observacao}")
+
+    if pedido.itens:
+        print(f"\n  {'#':<3} {'EMBALAGEM':<16} {'QUANTIDADE':>12} {'PESO KG':>9} {'R$/KG':>10} {'ICMS':<6} {'TOTAL':>14}")
+        print(f"  {'-'*74}")
+        for i, item in enumerate(pedido.itens, 1):
+            lbl = LABEL_EMBALAGEM.get(item.tipo_embalagem, item.tipo_embalagem)[:15]
+            if item.tipo_embalagem in ("AGRANEL", "BAG"):
+                qtde_fmt = f"{item.quantidade:.2f} kg"
+            else:
+                qtde_fmt = f"{item.quantidade:.0f} unid."
+            icms_txt = "Sim" if item.icms else "Não"
+            print(
+                f"  {i:<3} {lbl:<16} {qtde_fmt:>12} {item.peso_kg:>9.2f} "
+                f"{formatar_moeda(item.preco_unitario):>10} {icms_txt:<6} "
+                f"{formatar_moeda(item.valor_total):>14}"
+            )
+        print(f"  {'-'*74}")
+        print(
+            f"  {'TOTAL':<20} {'':>12} {pedido.peso_total_kg:>9.2f} "
+            f"{'':>10} {'':>6} {formatar_moeda(pedido.valor_total):>14}"
+        )
+    else:
+        print("\n  (sem itens)")
+    print(f"{'='*52}")
+
+
+def tela_consultar_pedidos():
+    """Tela de consulta de pedidos."""
+    while True:
+        cabecalho("CONSULTAR PEDIDOS")
+        print("  1. Todos os pedidos")
+        print("  2. Por cliente")
+        print("  3. Detalhar pedido por ID")
+        print("  4. Alterar data prevista de entrega")
+        print()
+        print("  0. Voltar")
+        print()
+
+        opcao = input("Opção: ").strip()
+
+        if opcao == "1":
+            _tela_listar_pedidos()
+        elif opcao == "2":
+            _tela_listar_pedidos_por_cliente()
+        elif opcao == "3":
+            _tela_detalhar_pedido()
+        elif opcao == "4":
+            _tela_alterar_data_entrega()
+        elif opcao == "0":
+            break
+        else:
+            print("Opção inválida!")
+            pausar()
+
+
+def _tela_listar_pedidos(empresa_id=None, titulo="TODOS OS PEDIDOS"):
+    """Lista pedidos em formato tabela."""
+    cabecalho(titulo)
+
+    print("  Filtrar por status:")
+    print("    1. Abertos")
+    print("    2. Baixados")
+    print("    3. Todos")
+    filtro = input("  Opção [3]: ").strip() or "3"
+    status_map = {"1": "ABERTO", "2": "BAIXADO"}
+    status = status_map.get(filtro)
+
+    pedidos = listar_pedidos(empresa_id=empresa_id, status=status)
+
+    limpar_tela()
+    cabecalho(titulo)
+
+    if not pedidos:
+        print("Nenhum pedido encontrado.")
+    else:
+        print(f"{'ID':<5} {'CLIENTE':<22} {'DATA':^12} {'ENTREGA':^12} {'KG TOTAL':>10} {'VALOR TOTAL':>14} {'STATUS':<8}")
+        print("-" * 87)
+        for p in pedidos:
+            print(
+                f"{p.id:<5} {(p.empresa_nome or '')[:22]:<22} "
+                f"{formatar_data(p.data_pedido):^12} "
+                f"{formatar_data(p.data_prevista_entrega):^12} "
+                f"{p.peso_total_kg:>10.2f} "
+                f"{formatar_moeda(p.valor_total):>14} "
+                f"{p.status:<8}"
+            )
+
+    pausar()
+
+
+def _tela_listar_pedidos_por_cliente():
+    """Lista pedidos filtrando por cliente."""
+    cabecalho("PEDIDOS POR CLIENTE")
+
+    empresas = listar_empresas()
+    if not empresas:
+        print("Nenhum cliente cadastrado.")
+        pausar()
+        return
+
+    print("Clientes:")
+    for emp in empresas:
+        print(f"  {emp.id}. {emp.nome}")
+    print()
+
+    empresa_id = input_inteiro("ID do cliente (0 para cancelar): ", minimo=0)
+    if empresa_id == 0:
+        return
+
+    empresa = buscar_empresa(empresa_id)
+    if not empresa:
+        print("Cliente não encontrado!")
+        pausar()
+        return
+
+    _tela_listar_pedidos(empresa_id=empresa_id,
+                         titulo=f"PEDIDOS - {empresa.nome.upper()}")
+
+
+def _tela_detalhar_pedido():
+    """Exibe detalhes completos de um pedido."""
+    cabecalho("DETALHAR PEDIDO")
+
+    pedido_id = input_inteiro("ID do pedido (0 para cancelar): ", minimo=0)
+    if pedido_id == 0:
+        return
+
+    pedido = buscar_pedido(pedido_id)
+    if not pedido:
+        print("Pedido não encontrado!")
+        pausar()
+        return
+
+    _exibir_pedido_detalhado(pedido)
+    pausar()
+
+
+def _tela_alterar_data_entrega():
+    """Altera a data prevista de entrega de um pedido."""
+    cabecalho("ALTERAR DATA DE ENTREGA")
+
+    pedido_id = input_inteiro("ID do pedido (0 para cancelar): ", minimo=0)
+    if pedido_id == 0:
+        return
+
+    pedido = buscar_pedido(pedido_id)
+    if not pedido:
+        print("Pedido não encontrado!")
+        pausar()
+        return
+
+    print(f"\nPedido #: {pedido.id} — {pedido.empresa_nome}")
+    print(f"Data prevista atual: {formatar_data(pedido.data_prevista_entrega)}")
+    print()
+
+    nova_data = input_data("Nova data prevista de entrega (DD/MM/AAAA): ")
+
+    if confirmar(f"Alterar para {formatar_data(nova_data)}? (S/N): "):
+        if atualizar_data_entrega(pedido_id, nova_data):
+            print("Data atualizada com sucesso!")
+        else:
+            print("Erro ao atualizar a data.")
+
+    pausar()
+
+
+def tela_baixar_pedido():
+    """Tela de baixa de pedido (carregamento realizado)."""
+    cabecalho("BAIXA DE PEDIDO")
+
+    pedidos = listar_pedidos(status="ABERTO")
+    if not pedidos:
+        print("Nenhum pedido em aberto para baixar.")
+        pausar()
+        return
+
+    print(f"{'ID':<5} {'CLIENTE':<25} {'ENTREGA':^12} {'KG TOTAL':>10} {'VALOR TOTAL':>14}")
+    print("-" * 70)
+    for p in pedidos:
+        print(
+            f"{p.id:<5} {(p.empresa_nome or '')[:25]:<25} "
+            f"{formatar_data(p.data_prevista_entrega):^12} "
+            f"{p.peso_total_kg:>10.2f} "
+            f"{formatar_moeda(p.valor_total):>14}"
+        )
+
+    print()
+    pedido_id = input_inteiro("ID do pedido a baixar (0 para cancelar): ", minimo=0)
+    if pedido_id == 0:
+        return
+
+    pedido = buscar_pedido(pedido_id)
+    if not pedido or pedido.status != "ABERTO":
+        print("Pedido não encontrado ou já baixado!")
+        pausar()
+        return
+
+    _exibir_pedido_detalhado(pedido)
+
+    print()
+    placa = input("Placa do veículo: ").strip().upper()
+    if not placa:
+        print("Placa é obrigatória!")
+        pausar()
+        return
+
+    from datetime import date as _date
+    print(f"\n  Data da baixa: {formatar_data(_date.today())}")
+    print(f"  Placa:         {placa}")
+
+    if confirmar("\nConfirmar baixa do pedido? (S/N): "):
+        if baixar_pedido(pedido_id, placa):
+            print(f"\nPedido #{pedido_id} baixado com sucesso!")
+        else:
+            print("Erro ao realizar baixa do pedido.")
 
     pausar()
